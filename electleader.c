@@ -15,7 +15,7 @@ int main(int argc, char* argv[]) {
 	MPI_Comm_rank(MPI_COMM_WORLD, &rank);
 	MPI_Comm_size(MPI_COMM_WORLD, &num);
 	int pnum = atoi(argv[1]);
-	int uid = (rank + 1) * pnum % num;
+	int uid = ((rank + 1) * pnum) % num;
 
 	/*
 	MPI_Send(void* data, int count, MPI_Datatype datatype, int destination,
