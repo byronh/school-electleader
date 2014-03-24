@@ -26,8 +26,8 @@ int msgs_recvd = 0;
 int ipow(int base, int exp);
 void send_msg(int* data, int destination, MPI_Request request, MPI_Status status);
 void recv_msg(int* data, int source, MPI_Status status);
-void print_sent_msg(int send[]);
-void print_recv_msg(int recv[]);
+void print_sent_msg(int send[], int left);
+void print_recv_msg(int recv[], int left);
 
 // Usage: mpiexec -n NUM ./electleader PNUM
 int main(int argc, char* argv[]) {
@@ -127,7 +127,7 @@ int ipow(int base, int exp) {
 }
 
 void send_msg(int* data, int destination, MPI_Request request, MPI_Status status) {
-	print_sent_msg(data);
+	print_sent_msg(data, destination == lrank);
 	MPI_Isend(data, 4, MPI_INT, destination, 0, MPI_COMM_WORLD, &request);
 	MPI_Wait(&request, &status);
 	msgs_sent++;
@@ -135,18 +135,20 @@ void send_msg(int* data, int destination, MPI_Request request, MPI_Status status
 
 void recv_msg(int* data, int source, MPI_Status status) {
 	MPI_Recv(data, 4, MPI_INT, source, 0, MPI_COMM_WORLD, &status);
-	print_recv_msg(data);
+	print_recv_msg(data, destination == lrank);
 	msgs_recvd++;
 }
 
-void print_sent_msg(int send[]) {
-	printf("%d sent {%s, uid:%d, phase:%d, dist:%d}\n", uid,
+void print_sent_msg(int send[], int left) {
+	printf("%d sent to %s: {%s, uid:%d, phase:%d, dist:%d}\n", uid,
+		left ? "L" : "R",
 		send[I_TYPE] == T_REPLY ? "REPLY" : send[I_TYPE] == T_ELECTION ? "ELECT" : "LEADER",
 		send[I_UID], send[I_PHASE], send[I_DIST]);
 }
 
-void print_recv_msg(int recv[]) {
-	printf("%d received {%s, uid:%d, phase:%d, dist:%d}\n", uid,
+void print_recv_msg(int recv[], int left) {
+	printf("%d received from %s: {%s, uid:%d, phase:%d, dist:%d}\n", uid,
+		left ? "L" : "R",
 		recv[I_TYPE] == T_REPLY ? "REPLY" : recv[I_TYPE] == T_ELECTION ? "ELECT" : "LEADER",
 		recv[I_UID], recv[I_PHASE], recv[I_DIST]);
 }
