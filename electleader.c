@@ -7,6 +7,7 @@ Assignment 3 - leader election using Hirshberg-Sinclair (HS) algorithm
 #include "mpi.h"
 #include <stdio.h>
 
+#define bool int
 #define TRUE 1
 #define FALSE 0
 
@@ -32,7 +33,7 @@ void print_recv_msg(int recv[], int left);
 // Usage: mpiexec -n NUM ./electleader PNUM
 int main(int argc, char* argv[]) {
 	
-	int election_complete = FALSE;
+	bool election_complete = FALSE;
 	int rank, num;
 
 	// Initialize rank and uid
@@ -68,42 +69,34 @@ int main(int argc, char* argv[]) {
 		recv_msg(rrecv, rrank, rstat);
 
 		// Handle messages from the left
-		switch (lrecv[I_TYPE]) {
-			case T_LEADER:
-				election_complete = TRUE;
-				break;
-			case T_ELECTION:
-				if ((lrecv[I_UID] > uid) && (lrecv[I_DIST] <= ipow(2, lrecv[I_PHASE]))) {
-					printf("%d sending election to the right\n", uid);
-					// rsend = {T_ELECTION, uid, phase, dist + 1};
-					// MPI_Isend(&rsend, 4, MPI_INT, rrank, 0, MPI_COMM_WORLD, &rreq);
-					// MPI_Wait(&rreq, &rstat);
-					// msgs_sent++;
-				}
-				break;
-			default:
-				printf("%d received invalid message type\n", uid);
-				break;
+		if (lrecv[I_TYPE] == T_LEADER) {
+			election_complete = TRUE;
+			break;
+		} else if (lrecv[I_TYPE] == T_ELECTION) {
+			if ((lrecv[I_UID] > uid) && (lrecv[I_DIST] <= ipow(2, lrecv[I_PHASE]))) {
+				int data[4] = {T_ELECTION, uid, phase, dist + 1};
+				send_msg(data, rrank, rreq, rstat);
+			}
+		} else {
+			printf("%d received invalid message type\n", uid);
 		}
-
-		if (election_complete) break;
 
 		// Handle messages from the right
-		switch (rrecv[I_TYPE]) {
-			case T_LEADER:
-				election_complete = TRUE;
-				break;
-			case T_ELECTION:
-				if ((rrecv[I_UID] > uid) && (rrecv[I_DIST] <= ipow(2, rrecv[I_PHASE]))) {
-					printf("%d sending election to the left\n", uid);
-				}
-				break;
-			default:
-				printf("%d received invalid message type\n", uid);
-				break;
+		if (rrecv[I_TYPE] == T_LEADER) {
+			election_complete = TRUE;
+			break;
+		} else if (rrecv[I_TYPE] == T_ELECTION) {
+			if ((rrecv[I_UID] > uid) && (rrecv[I_DIST] <= ipow(2, rrecv[I_PHASE]))) {
+				int data[4] = {T_ELECTION, uid, phase, dist + 1};
+				send_msg(data, lrank, lreq, lstat);
+			}
+		} else {
+			printf("%d received invalid message type\n", uid);
 		}
 
+		// if (uid == 0) {
 		election_complete = TRUE;
+		// }
 	}
 
 	// Election complete
@@ -139,14 +132,14 @@ void recv_msg(int* data, int source, MPI_Status status) {
 	msgs_recvd++;
 }
 
-void print_sent_msg(int send[], int left) {
+void print_sent_msg(int send[], bool left) {
 	printf("%d sent to %s: {%s, uid:%d, phase:%d, dist:%d}\n", uid,
 		left ? "L" : "R",
 		send[I_TYPE] == T_REPLY ? "REPLY" : send[I_TYPE] == T_ELECTION ? "ELECT" : "LEADER",
 		send[I_UID], send[I_PHASE], send[I_DIST]);
 }
 
-void print_recv_msg(int recv[], int left) {
+void print_recv_msg(int recv[], bool left) {
 	printf("%d received from %s: {%s, uid:%d, phase:%d, dist:%d}\n", uid,
 		left ? "L" : "R",
 		recv[I_TYPE] == T_REPLY ? "REPLY" : recv[I_TYPE] == T_ELECTION ? "ELECT" : "LEADER",
