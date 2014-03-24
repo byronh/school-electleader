@@ -82,7 +82,7 @@ int main(int argc, char* argv[]) {
 				}
 				break;
 			default:
-				printf("%d received invalid message type\n", uid); print_recv_msg(lrecv);
+				printf("%d received invalid message type\n", uid);
 				break;
 		}
 
@@ -99,7 +99,7 @@ int main(int argc, char* argv[]) {
 				}
 				break;
 			default:
-				printf("%d received invalid message type\n", uid); print_recv_msg(rrecv);
+				printf("%d received invalid message type\n", uid);
 				break;
 		}
 
@@ -135,7 +135,7 @@ void send_msg(int* data, int destination, MPI_Request request, MPI_Status status
 
 void recv_msg(int* data, int source, MPI_Status status) {
 	MPI_Recv(data, 4, MPI_INT, source, 0, MPI_COMM_WORLD, &status);
-	print_recv_msg(data, destination == lrank);
+	print_recv_msg(data, source == lrank);
 	msgs_recvd++;
 }
 
