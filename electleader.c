@@ -19,38 +19,34 @@ Assignment 3 - leader election using Hirshberg-Sinclair (HS) algorithm
 #define I_PHASE 2
 #define I_DIST 3
 
+int uid, lrank, rrank;
+int msgs_sent = 0;
+int msgs_recvd = 0;
+
 int ipow(int base, int exp);
-void printmsg(int recv[]);
+void send_msg(int* data, int destination, MPI_Request request, MPI_Status status);
+void recv_msg(int* data, int source, MPI_Status status);
+void print_sent_msg(int send[]);
+void print_recv_msg(int recv[]);
 
 // Usage: mpiexec -n NUM ./electleader PNUM
 int main(int argc, char* argv[]) {
 	
 	int election_complete = FALSE;
 	int rank, num;
-	int msgs_sent = 0;
-	int msgs_recvd = 0;
 
 	// Initialize rank and uid
 	MPI_Init(&argc, &argv);
 	MPI_Comm_rank(MPI_COMM_WORLD, &rank);
 	MPI_Comm_size(MPI_COMM_WORLD, &num);
 	int pnum = atoi(argv[argc-1]);
-	int uid = ((rank + 1) * pnum) % num;
+	uid = ((rank + 1) * pnum) % num;
 
 	// Initialize neighbor ranks
-	int lrank = (rank - 1) % num;
+	lrank = (rank - 1) % num;
 	if (lrank < 0) lrank += num;
-	int rrank = (rank + 1) % num;
+	rrank = (rank + 1) % num;
 	if (rrank < 0) rrank += num;
-
-	/*
-	MPI_Send(void* data, int count, MPI_Datatype datatype, int destination,
-		int tag, MPI_Comm communicator)
-	MPI_Recv(void* data, int count, MPI_Datatype datatype, int source,
-        int tag, MPI_Comm communicator, MPI_Status* status)
-	Params: data buffer, count of elements in buffer, type of elements in buffer
-			rank of sending/receiving process, tag of message
-	*/
 
 	int phase = 0;
 	int dist = 0;
@@ -63,43 +59,51 @@ int main(int argc, char* argv[]) {
 	MPI_Request lreq, rreq;
 	MPI_Status lstat, rstat;
 
-	// Initiate election
-	MPI_Isend(&lsend, 4, MPI_INT, lrank, 0, MPI_COMM_WORLD, &lreq);
-	MPI_Isend(&rsend, 4, MPI_INT, rrank, 0, MPI_COMM_WORLD, &rreq);
-	msgs_sent += 2;
-	MPI_Wait(&lreq, &lstat);
-	MPI_Wait(&rreq, &rstat);
+	// Initiate phase 0 election
+	send_msg(lsend, lrank, lreq, lstat);
+	send_msg(rsend, rrank, rreq, rstat);
 
 	while (!election_complete) {
+		recv_msg(lrecv, lrank, lstat);
+		recv_msg(rrecv, rrank, rstat);
 
-		MPI_Recv(&lrecv, 4, MPI_INT, lrank, 0, MPI_COMM_WORLD, &lstat);
-		MPI_Recv(&rrecv, 4, MPI_INT, rrank, 0, MPI_COMM_WORLD, &rstat);
-		msgs_recvd += 2;
-		printf("%d received L:", uid); printmsg(lrecv);
-		printf("%d received R:", uid); printmsg(rrecv);
-
-		// j = uid, k = phase, d = dist
 		// Handle messages from the left
-		if (lrecv[I_TYPE] == T_ELECTION) {
-			if ((lrecv[I_UID] > uid) && (lrecv[I_DIST] <= ipow(2, lrecv[I_PHASE]))) {
-				printf("%d sending election to the right\n", uid);
-			}
+		switch (lrecv[I_TYPE]) {
+			case T_LEADER:
+				election_complete = TRUE;
+				break;
+			case T_ELECTION:
+				if ((lrecv[I_UID] > uid) && (lrecv[I_DIST] <= ipow(2, lrecv[I_PHASE]))) {
+					printf("%d sending election to the right\n", uid);
+					// rsend = {T_ELECTION, uid, phase, dist + 1};
+					// MPI_Isend(&rsend, 4, MPI_INT, rrank, 0, MPI_COMM_WORLD, &rreq);
+					// MPI_Wait(&rreq, &rstat);
+					// msgs_sent++;
+				}
+				break;
+			default:
+				printf("%d received invalid message type\n", uid); print_recv_msg(lrecv);
+				break;
 		}
+
+		if (election_complete) break;
 
 		// Handle messages from the right
-		if (rrecv[I_TYPE] == T_ELECTION) {
-			if ((rrecv[I_UID] > uid) && (rrecv[I_DIST] <= ipow(2, rrecv[I_PHASE]))) {
-				printf("%d sending election to the left\n", uid);
-			}
+		switch (rrecv[I_TYPE]) {
+			case T_LEADER:
+				election_complete = TRUE;
+				break;
+			case T_ELECTION:
+				if ((rrecv[I_UID] > uid) && (rrecv[I_DIST] <= ipow(2, rrecv[I_PHASE]))) {
+					printf("%d sending election to the left\n", uid);
+				}
+				break;
+			default:
+				printf("%d received invalid message type\n", uid); print_recv_msg(rrecv);
+				break;
 		}
 
-		// Temp: Always make first guy leader
 		election_complete = TRUE;
-		// if (uid == 0) {
-		// 	MPI_Isend(&rsend, 4, MPI_INT, rrank, 0, MPI_COMM_WORLD, &rreq);
-		// 	msgs_sent += 2;
-		// 	MPI_Wait(&lreq, &lstat);
-		// }
 	}
 
 	// Election complete
@@ -122,7 +126,27 @@ int ipow(int base, int exp) {
     return result;
 }
 
-void printmsg(int recv[]) {
-	printf(" {%s, uid:%d, phase:%d, dist:%d}\n", recv[I_TYPE] == T_REPLY ? "REPLY" : "ELECT",
+void send_msg(int* data, int destination, MPI_Request request, MPI_Status status) {
+	print_sent_msg(data);
+	MPI_Isend(data, 4, MPI_INT, destination, 0, MPI_COMM_WORLD, &request);
+	MPI_Wait(&request, &status);
+	msgs_sent++;
+}
+
+void recv_msg(int* data, int source, MPI_Status status) {
+	MPI_Recv(data, 4, MPI_INT, source, 0, MPI_COMM_WORLD, &status);
+	print_recv_msg(data);
+	msgs_recvd++;
+}
+
+void print_sent_msg(int send[]) {
+	printf("%d sent {%s, uid:%d, phase:%d, dist:%d}\n", uid,
+		send[I_TYPE] == T_REPLY ? "REPLY" : send[I_TYPE] == T_ELECTION ? "ELECT" : "LEADER",
+		send[I_UID], send[I_PHASE], send[I_DIST]);
+}
+
+void print_recv_msg(int recv[]) {
+	printf("%d received {%s, uid:%d, phase:%d, dist:%d}\n", uid,
+		recv[I_TYPE] == T_REPLY ? "REPLY" : recv[I_TYPE] == T_ELECTION ? "ELECT" : "LEADER",
 		recv[I_UID], recv[I_PHASE], recv[I_DIST]);
 }
