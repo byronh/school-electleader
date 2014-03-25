@@ -85,6 +85,7 @@ int main(int argc, char* argv[]) {
 	MPI_Status lstat, rstat;
 
 	// Initiate phase 0 election
+	int leader = -1;
 	send_msg(lsend, lrank, lreq, lstat);
 	send_msg(rsend, rrank, rreq, rstat);
 
@@ -95,21 +96,23 @@ int main(int argc, char* argv[]) {
 		recv_msg(lrecv, lrank, lstat);
 		recv_msg(rrecv, rrank, rstat);
 
-		if (uid == 0) {
-			int data[4] = {T_LEADER, uid, -1, -1};
-			send_msg(data, lrank, lreq, lstat);
-			send_msg(data, rrank, rreq, rstat);
-			break;
-		}
+		// if (uid == 0 && i>0) {
+		// 	int data[4] = {T_LEADER, uid, -1, -1};
+		// 	send_msg(data, lrank, lreq, lstat);
+		// 	send_msg(data, rrank, rreq, rstat);
+		// 	break;
+		// }
 
 		// Handle messages from the left
 		if (lrecv[I_TYPE] == T_LEADER) {
 			ldone = TRUE;
-			printf("%d acknowledges a leader\n", uid);
+			leader = lrecv[I_UID];
+			printf("** %d acknowledges leader %d\n", uid, leader);
 			if (!rdone) {
-				int data[4] = {T_LEADER, uid, -1, -1};
+				int data[4] = {T_LEADER, leader, -1, -1};
 				send_msg(data, rrank, rreq, rstat);
 			}
+			//break;
 		} else if (lrecv[I_TYPE] == T_ELECTION) {
 			if (!rdone && (lrecv[I_UID] > uid) && (lrecv[I_DIST] <= ipow(2, lrecv[I_PHASE]))) {
 				int data[4] = {T_ELECTION, uid, phase, dist + 1};
@@ -120,11 +123,13 @@ int main(int argc, char* argv[]) {
 		// Handle messages from the right
 		if (rrecv[I_TYPE] == T_LEADER) {
 			rdone = TRUE;
-			printf("%d acknowledges a leader\n", uid);
+			leader = rrecv[I_UID];
+			printf("** %d acknowledges leader %d\n", uid, leader);
 			if (!ldone) {
-				int data[4] = {T_LEADER, uid, -1, -1};
+				int data[4] = {T_LEADER, leader, -1, -1};
 				send_msg(data, lrank, lreq, lstat);
 			}
+			//break;
 		} else if (rrecv[I_TYPE] == T_ELECTION) {
 			if (!ldone && (rrecv[I_UID] > uid) && (rrecv[I_DIST] <= ipow(2, rrecv[I_PHASE]))) {
 				int data[4] = {T_ELECTION, uid, phase, dist + 1};
@@ -132,7 +137,7 @@ int main(int argc, char* argv[]) {
 			}
 		}
 
-		if (i >= 1) election_complete = TRUE;
+		if (ldone || rdone) election_complete = TRUE;
 		i++;
 
 		// Send null messages to prevent deadlock
@@ -147,7 +152,7 @@ int main(int argc, char* argv[]) {
 	}
 
 	// Election complete
-	printf("%d is done\n", uid);
+	//printf("**%d is done\n", uid);
 	//printf("rank=%d, id=%d, leader=0, mrcvd=%d, msent=%d\n", rank, uid, msgs_recvd, msgs_sent);
 
 	MPI_Finalize();
