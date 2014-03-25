@@ -46,8 +46,8 @@ int msgs_recvd = 0;
 int lsent = 0;
 int rsent = 0;
 bool election_complete = FALSE;
-// bool ldone = FALSE;
-// bool rdone = FALSE;
+bool ldone = FALSE;
+bool rdone = FALSE;
 
 int ipow(int base, int exp);
 void send_msg(int* data, int destination, MPI_Request request, MPI_Status status);
@@ -90,22 +90,28 @@ int main(int argc, char* argv[]) {
 
 	int i=0;
 	while (!election_complete) {
+		lsent = 0;
+		rsent = 0;
 		recv_msg(lrecv, lrank, lstat);
 		recv_msg(rrecv, rrank, rstat);
 
-		lsent=0;
-		rsent = 0;
+		if (uid == 0) {
+			int data[4] = {T_LEADER, uid, -1, -1};
+			send_msg(data, lrank, lreq, lstat);
+			send_msg(data, rrank, rreq, rstat);
+			break;
+		}
 
 		// Handle messages from the left
 		if (lrecv[I_TYPE] == T_LEADER) {
-			// ldone = TRUE;
-			// printf("%d acknowledges a leader\n", uid);
-			// if (!rdone) {
-			// 	int data[4] = {T_LEADER, uid, -1, -1};
-			// 	send_msg(data, rrank, rreq, rstat);
-			// }
+			ldone = TRUE;
+			printf("%d acknowledges a leader\n", uid);
+			if (!rdone) {
+				int data[4] = {T_LEADER, uid, -1, -1};
+				send_msg(data, rrank, rreq, rstat);
+			}
 		} else if (lrecv[I_TYPE] == T_ELECTION) {
-			if ((lrecv[I_UID] > uid) && (lrecv[I_DIST] <= ipow(2, lrecv[I_PHASE]))) {
+			if (!rdone && (lrecv[I_UID] > uid) && (lrecv[I_DIST] <= ipow(2, lrecv[I_PHASE]))) {
 				int data[4] = {T_ELECTION, uid, phase, dist + 1};
 				send_msg(data, rrank, rreq, rstat);
 			}
@@ -113,14 +119,14 @@ int main(int argc, char* argv[]) {
 
 		// Handle messages from the right
 		if (rrecv[I_TYPE] == T_LEADER) {
-			// rdone = TRUE;
-			// printf("%d acknowledges a leader\n", uid);
-			// if (!ldone) {
-			// 	int data[4] = {T_LEADER, uid, -1, -1};
-			// 	send_msg(data, lrank, lreq, lstat);
-			// }
+			rdone = TRUE;
+			printf("%d acknowledges a leader\n", uid);
+			if (!ldone) {
+				int data[4] = {T_LEADER, uid, -1, -1};
+				send_msg(data, lrank, lreq, lstat);
+			}
 		} else if (rrecv[I_TYPE] == T_ELECTION) {
-			if ((rrecv[I_UID] > uid) && (rrecv[I_DIST] <= ipow(2, rrecv[I_PHASE]))) {
+			if (!ldone && (rrecv[I_UID] > uid) && (rrecv[I_DIST] <= ipow(2, rrecv[I_PHASE]))) {
 				int data[4] = {T_ELECTION, uid, phase, dist + 1};
 				send_msg(data, lrank, lreq, lstat);
 			}
@@ -128,12 +134,6 @@ int main(int argc, char* argv[]) {
 
 		if (i >= 1) election_complete = TRUE;
 		i++;
-
-		// if (uid == 0) {
-		// 	int data[4] = {T_LEADER, uid, -1, -1};
-		// 	send_msg(data, lrank, lreq, lstat);
-		// 	send_msg(data, rrank, rreq, rstat);
-		// }
 
 		// Send null messages to prevent deadlock
 		if (lsent == 0) {
