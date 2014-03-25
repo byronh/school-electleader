@@ -2,6 +2,25 @@
 Byron Henze
 66809088
 Assignment 3 - leader election using Hirshberg-Sinclair (HS) algorithm
+
+Algorithm pseudo-code from http://www.cs.rug.nl/~eirini/DS_slides/leader_election.pdf
+
+To initiate an election (phase 0):
+	send(ELECTION, my_id, 0, 0) to left and right
+
+Upon receiving a message ELECTION, j, k, d from left (right):
+	if ((j > my_id) && (d <= 2^k)):
+		send(ELECTION, j, k, d + 1) to right (left)
+	if ((j > my_id) && (d == 2^k)):
+		send(REPLY, j, k) to left (right)
+	if (my_id = j):
+		announce self as leader
+
+Upon receiving a message REPLY, j, k from left (right):
+	if (my_id != j):
+		send(REPLY, j, k) to right (left)
+	else if (already received REPLY, j, k):
+		send(ELECTION, j, k + 1, 1) to left and right;
 */
 
 #include "mpi.h"
@@ -11,9 +30,10 @@ Assignment 3 - leader election using Hirshberg-Sinclair (HS) algorithm
 #define TRUE 1
 #define FALSE 0
 
-#define T_ELECTION 0
-#define T_REPLY 1
-#define T_LEADER 2
+#define T_NULL 0
+#define T_ELECTION 1
+#define T_REPLY 2
+#define T_LEADER 3
 
 #define I_TYPE 0
 #define I_UID 1
@@ -23,17 +43,20 @@ Assignment 3 - leader election using Hirshberg-Sinclair (HS) algorithm
 int uid, lrank, rrank;
 int msgs_sent = 0;
 int msgs_recvd = 0;
+int lsent = 0;
+int rsent = 0;
+bool election_complete = FALSE;
+// bool ldone = FALSE;
+// bool rdone = FALSE;
 
 int ipow(int base, int exp);
 void send_msg(int* data, int destination, MPI_Request request, MPI_Status status);
 void recv_msg(int* data, int source, MPI_Status status);
-void print_sent_msg(int send[], int left);
-void print_recv_msg(int recv[], int left);
+void print_sent_msg(int send[], int dest);
+void print_recv_msg(int recv[], int source);
 
 // Usage: mpiexec -n NUM ./electleader PNUM
 int main(int argc, char* argv[]) {
-	
-	bool election_complete = FALSE;
 	int rank, num;
 
 	// Initialize rank and uid
@@ -41,7 +64,8 @@ int main(int argc, char* argv[]) {
 	MPI_Comm_rank(MPI_COMM_WORLD, &rank);
 	MPI_Comm_size(MPI_COMM_WORLD, &num);
 	int pnum = atoi(argv[argc-1]);
-	uid = ((rank + 1) * pnum) % num;
+	//uid = ((rank + 1) * pnum) % num;
+	uid = rank;
 
 	// Initialize neighbor ranks
 	lrank = (rank - 1) % num;
@@ -64,42 +88,66 @@ int main(int argc, char* argv[]) {
 	send_msg(lsend, lrank, lreq, lstat);
 	send_msg(rsend, rrank, rreq, rstat);
 
+	int i=0;
 	while (!election_complete) {
 		recv_msg(lrecv, lrank, lstat);
 		recv_msg(rrecv, rrank, rstat);
 
+		lsent=0;
+		rsent = 0;
+
 		// Handle messages from the left
 		if (lrecv[I_TYPE] == T_LEADER) {
-			election_complete = TRUE;
-			break;
+			// ldone = TRUE;
+			// printf("%d acknowledges a leader\n", uid);
+			// if (!rdone) {
+			// 	int data[4] = {T_LEADER, uid, -1, -1};
+			// 	send_msg(data, rrank, rreq, rstat);
+			// }
 		} else if (lrecv[I_TYPE] == T_ELECTION) {
 			if ((lrecv[I_UID] > uid) && (lrecv[I_DIST] <= ipow(2, lrecv[I_PHASE]))) {
 				int data[4] = {T_ELECTION, uid, phase, dist + 1};
 				send_msg(data, rrank, rreq, rstat);
 			}
-		} else {
-			printf("%d received invalid message type\n", uid);
 		}
 
 		// Handle messages from the right
 		if (rrecv[I_TYPE] == T_LEADER) {
-			election_complete = TRUE;
-			break;
+			// rdone = TRUE;
+			// printf("%d acknowledges a leader\n", uid);
+			// if (!ldone) {
+			// 	int data[4] = {T_LEADER, uid, -1, -1};
+			// 	send_msg(data, lrank, lreq, lstat);
+			// }
 		} else if (rrecv[I_TYPE] == T_ELECTION) {
 			if ((rrecv[I_UID] > uid) && (rrecv[I_DIST] <= ipow(2, rrecv[I_PHASE]))) {
 				int data[4] = {T_ELECTION, uid, phase, dist + 1};
 				send_msg(data, lrank, lreq, lstat);
 			}
-		} else {
-			printf("%d received invalid message type\n", uid);
 		}
 
+		if (i >= 1) election_complete = TRUE;
+		i++;
+
 		// if (uid == 0) {
-		election_complete = TRUE;
+		// 	int data[4] = {T_LEADER, uid, -1, -1};
+		// 	send_msg(data, lrank, lreq, lstat);
+		// 	send_msg(data, rrank, rreq, rstat);
 		// }
+
+		// Send null messages to prevent deadlock
+		if (lsent == 0) {
+			int data[4] = {T_NULL, uid, 0, 0};
+			send_msg(data, lrank, lreq, lstat);
+		}
+		if (rsent == 0) {
+			int data[4] = {T_NULL, uid, 0, 0};
+			send_msg(data, rrank, rreq, rstat);
+		}
 	}
 
 	// Election complete
+	printf("%d is done\n", uid);
 	//printf("rank=%d, id=%d, leader=0, mrcvd=%d, msent=%d\n", rank, uid, msgs_recvd, msgs_sent);
 
 	MPI_Finalize();
@@ -120,7 +168,9 @@ int ipow(int base, int exp) {
 }
 
 void send_msg(int* data, int destination, MPI_Request request, MPI_Status status) {
-	print_sent_msg(data, destination == lrank);
+	if (destination == lrank) lsent++;
+	else if (destination == rrank) rsent++;
+	print_sent_msg(data, destination);
 	MPI_Isend(data, 4, MPI_INT, destination, 0, MPI_COMM_WORLD, &request);
 	MPI_Wait(&request, &status);
 	msgs_sent++;
@@ -128,20 +178,20 @@ void send_msg(int* data, int destination, MPI_Request request, MPI_Status status
 
 void recv_msg(int* data, int source, MPI_Status status) {
 	MPI_Recv(data, 4, MPI_INT, source, 0, MPI_COMM_WORLD, &status);
-	print_recv_msg(data, source == lrank);
+	print_recv_msg(data, source);
 	msgs_recvd++;
 }
 
-void print_sent_msg(int send[], bool left) {
-	printf("%d sent to %s: {%s, uid:%d, phase:%d, dist:%d}\n", uid,
-		left ? "L" : "R",
-		send[I_TYPE] == T_REPLY ? "REPLY" : send[I_TYPE] == T_ELECTION ? "ELECT" : "LEADER",
-		send[I_UID], send[I_PHASE], send[I_DIST]);
+void print_sent_msg(int send[], int dest) {
+	if (send[I_TYPE] == T_NULL) return;
+	printf("%d sent to %d %s: {%d, uid:%d, phase:%d, dist:%d}\n", uid, dest,
+		dest == lrank ? "L" : "R",
+		send[I_TYPE], send[I_UID], send[I_PHASE], send[I_DIST]);
 }
 
-void print_recv_msg(int recv[], bool left) {
-	printf("%d received from %s: {%s, uid:%d, phase:%d, dist:%d}\n", uid,
-		left ? "L" : "R",
-		recv[I_TYPE] == T_REPLY ? "REPLY" : recv[I_TYPE] == T_ELECTION ? "ELECT" : "LEADER",
-		recv[I_UID], recv[I_PHASE], recv[I_DIST]);
+void print_recv_msg(int recv[], int source) {
+	if (recv[I_TYPE] == T_NULL) return;
+	printf("%d received from %d %s: {%d, uid:%d, phase:%d, dist:%d}\n", uid, source,
+		source == lrank ? "L" : "R",
+		recv[I_TYPE], recv[I_UID], recv[I_PHASE], recv[I_DIST]);
 }
