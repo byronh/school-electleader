@@ -86,8 +86,7 @@ int main(int argc, char* argv[]) {
 	MPI_Comm_rank(MPI_COMM_WORLD, &rank);
 	MPI_Comm_size(MPI_COMM_WORLD, &num);
 	int pnum = atoi(argv[argc-1]);
-	//uid = ((rank + 1) * pnum) % num;
-	uid = rank;
+	uid = ((rank + 1) * pnum) % num;
 
 	// Initialize neighbor ranks
 	lrank = (rank - 1) % num;
@@ -96,6 +95,7 @@ int main(int argc, char* argv[]) {
 	if (rrank < 0) rrank += num;
 
 	int leader = -1;
+	int leader_rank = -1;
 	int phase = 0;
 	int dist = 0;
 
@@ -104,13 +104,20 @@ int main(int argc, char* argv[]) {
 	memset(replies, FALSE, sizeof replies);
 
 	// Begin phase 0 election
+	if (num == 1) {
+		election_complete = TRUE;
+		leader = uid;
+		leader_rank = rank;
+	}
+
 	int lsend[4] = {T_ELECTION, uid, phase, dist};
 	int rsend[4] = {T_ELECTION, uid, phase, dist};
 	int lrecv[4] = {0, 0, 0, 0};
 	int rrecv[4] = {0, 0, 0, 0};
-	send_msg(lsend, lrank, lreq, lstat);
-	send_msg(rsend, rrank, rreq, rstat);
-
+	if (num > 1) {
+		send_msg(lsend, lrank, lreq, lstat);
+		send_msg(rsend, rrank, rreq, rstat);
+	}
 	int t, j, k, d;
 
 	while (!election_complete) {
@@ -131,6 +138,7 @@ int main(int argc, char* argv[]) {
 			if (t == T_LEADER && leader == -1) {
 				ldone = TRUE;
 				leader = j;
+				leader_rank = lrank;
 				if (DEBUG) printf("** %d acknowledges leader %d\n", uid, leader);
 				if (!rdone) {
 					int data[4] = {T_LEADER, leader, -1, -1};
@@ -181,6 +189,7 @@ int main(int argc, char* argv[]) {
 			if (t == T_LEADER && leader == -1) {
 				rdone = TRUE;
 				leader = j;
+				leader_rank = rrank;
 				if (DEBUG) printf("** %d acknowledges leader %d\n", uid, leader);
 				if (!ldone) {
 					int data[4] = {T_LEADER, leader, -1, -1};
@@ -222,9 +231,25 @@ int main(int argc, char* argv[]) {
 	// Election complete
 	printf("rank=%d, id=%d, leader=%d, mrcvd=%d, msent=%d\n", rank, uid, leader == uid ? 1 : 0, msgs_recvd, msgs_sent);
 
-	// Another messaging round to send total messages to leader
-
-
+	// Non-leaders send # messages sent and received to the leader
+	if (uid != leader) {
+		int data[2] = {msgs_recvd, msgs_sent};
+		MPI_Send(&data, 2, MPI_INT, leader_rank, 1, MPI_COMM_WORLD);
+	}
+	// Leader add up totals for messages sent and received
+	else {
+		int i;
+		int total_received = msgs_recvd;
+		int total_sent = msgs_sent;
+		for (i=0; i<num; i++) {
+			if (i == rank) continue;
+			int data[2] = {0, 0};
+			MPI_Recv(&data, 2, MPI_INT, i, 1, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+			total_received += data[0];
+			total_sent += data[1];
+		}
+		printf("rank=%d, id=%d, trcvd=%d, tsent=%d\n", rank, uid, total_received, total_sent);
+	}
 
 	MPI_Finalize();
 	return 0;
