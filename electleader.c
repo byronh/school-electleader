@@ -25,6 +25,7 @@ Upon receiving a message REPLY, j, k from left (right):
 
 #include "mpi.h"
 #include <stdio.h>
+#include <string.h>
 
 #define bool int
 #define TRUE 1
@@ -35,10 +36,11 @@ Upon receiving a message REPLY, j, k from left (right):
 #define T_REPLY 2
 #define T_LEADER 3
 
+// TYPE = message type, J = uid, K = phase, D = distance
 #define I_TYPE 0
-#define I_UID 1
-#define I_PHASE 2
-#define I_DIST 3
+#define I_J 1
+#define I_K 2
+#define I_D 3
 
 int uid, lrank, rrank;
 int msgs_sent = 0;
@@ -73,19 +75,21 @@ int main(int argc, char* argv[]) {
 	rrank = (rank + 1) % num;
 	if (rrank < 0) rrank += num;
 
+	int leader = -1;
 	int phase = 0;
 	int dist = 0;
+	MPI_Request lreq, rreq;
+	MPI_Status lstat, rstat;
 
+	// Initialize 2-dimensional array to keep track of replies(j,k) already received
+	int replies[num][num];
+	memset(replies, FALSE, sizeof replies);
+
+	// Begin phase 0 election
 	int lsend[4] = {T_ELECTION, uid, phase, dist};
 	int rsend[4] = {T_ELECTION, uid, phase, dist};
 	int lrecv[4] = {0, 0, 0, 0};
 	int rrecv[4] = {0, 0, 0, 0};
-
-	MPI_Request lreq, rreq;
-	MPI_Status lstat, rstat;
-
-	// Initiate phase 0 election
-	int leader = -1;
 	send_msg(lsend, lrank, lreq, lstat);
 	send_msg(rsend, rrank, rreq, rstat);
 
@@ -96,17 +100,17 @@ int main(int argc, char* argv[]) {
 		recv_msg(lrecv, lrank, lstat);
 		recv_msg(rrecv, rrank, rstat);
 
-		// if (uid == 0 && i>0) {
-		// 	int data[4] = {T_LEADER, uid, -1, -1};
-		// 	send_msg(data, lrank, lreq, lstat);
-		// 	send_msg(data, rrank, rreq, rstat);
-		// 	break;
-		// }
+		if (uid == 0 && i>4) {
+			int data[4] = {T_LEADER, uid, -1, -1};
+			send_msg(data, lrank, lreq, lstat);
+			send_msg(data, rrank, rreq, rstat);
+			break;
+		}
 
 		// Handle messages from the left
 		if (lrecv[I_TYPE] == T_LEADER) {
 			ldone = TRUE;
-			leader = lrecv[I_UID];
+			leader = lrecv[I_J];
 			printf("** %d acknowledges leader %d\n", uid, leader);
 			if (!rdone) {
 				int data[4] = {T_LEADER, leader, -1, -1};
@@ -114,16 +118,26 @@ int main(int argc, char* argv[]) {
 			}
 			//break;
 		} else if (lrecv[I_TYPE] == T_ELECTION) {
-			if (!rdone && (lrecv[I_UID] > uid) && (lrecv[I_DIST] <= ipow(2, lrecv[I_PHASE]))) {
-				int data[4] = {T_ELECTION, uid, phase, dist + 1};
-				send_msg(data, rrank, rreq, rstat);
+			if (!rdone && (lrecv[I_J] > uid) && (lrecv[I_D] <= ipow(2, lrecv[I_K]))) {
+				int election[4] = {T_ELECTION, lrecv[I_J], lrecv[I_K], lrecv[I_D] + 1};
+				send_msg(election, rrank, rreq, rstat);
+			}
+			if (!ldone && (lrecv[I_J] > uid) && (lrecv[I_D] == ipow(2, lrecv[I_K]))) {
+				int reply[4] = {T_REPLY, lrecv[I_J], lrecv[I_K], -1};
+				send_msg(reply, lrank, lreq, lstat);
+			}
+		} else if (lrecv[I_TYPE] == T_REPLY) {
+			if (!rdone && uid != lrecv[I_J]) {
+				replies[lrecv[I_J]][lrecv[I_K]] = TRUE;
+				int reply[4] = {T_REPLY, lrecv[I_J], lrecv[I_K], -1};
+				send_msg(reply, rrank, rreq, rstat);
 			}
 		}
 
 		// Handle messages from the right
 		if (rrecv[I_TYPE] == T_LEADER) {
 			rdone = TRUE;
-			leader = rrecv[I_UID];
+			leader = rrecv[I_J];
 			printf("** %d acknowledges leader %d\n", uid, leader);
 			if (!ldone) {
 				int data[4] = {T_LEADER, leader, -1, -1};
@@ -131,9 +145,19 @@ int main(int argc, char* argv[]) {
 			}
 			//break;
 		} else if (rrecv[I_TYPE] == T_ELECTION) {
-			if (!ldone && (rrecv[I_UID] > uid) && (rrecv[I_DIST] <= ipow(2, rrecv[I_PHASE]))) {
-				int data[4] = {T_ELECTION, uid, phase, dist + 1};
-				send_msg(data, lrank, lreq, lstat);
+			if (!ldone && (rrecv[I_J] > uid) && (rrecv[I_D] <= ipow(2, rrecv[I_K]))) {
+				int election[4] = {T_ELECTION, rrecv[I_J], rrecv[I_K], rrecv[I_D] + 1};
+				send_msg(election, lrank, lreq, lstat);
+			}
+			if (!rdone && (rrecv[I_J] > uid) && (rrecv[I_D] == ipow(2, rrecv[I_K]))) {
+				int reply[4] = {T_REPLY, rrecv[I_J], rrecv[I_K], -1};
+				send_msg(reply, rrank, rreq, rstat);
+			}
+		} else if (rrecv[I_TYPE] == T_REPLY) {
+			if (!ldone && uid != rrecv[I_J]) {
+				replies[rrecv[I_J]][rrecv[I_K]] = TRUE;
+				int reply[4] = {T_REPLY, rrecv[I_J], rrecv[I_K], -1};
+				send_msg(reply, lrank, lreq, lstat);
 			}
 		}
 
@@ -191,12 +215,12 @@ void print_sent_msg(int send[], int dest) {
 	if (send[I_TYPE] == T_NULL) return;
 	printf("%d sent to %d %s: {%d, uid:%d, phase:%d, dist:%d}\n", uid, dest,
 		dest == lrank ? "L" : "R",
-		send[I_TYPE], send[I_UID], send[I_PHASE], send[I_DIST]);
+		send[I_TYPE], send[I_J], send[I_K], send[I_D]);
 }
 
 void print_recv_msg(int recv[], int source) {
 	if (recv[I_TYPE] == T_NULL) return;
 	printf("%d received from %d %s: {%d, uid:%d, phase:%d, dist:%d}\n", uid, source,
 		source == lrank ? "L" : "R",
-		recv[I_TYPE], recv[I_UID], recv[I_PHASE], recv[I_DIST]);
+		recv[I_TYPE], recv[I_J], recv[I_K], recv[I_D]);
 }
