@@ -42,6 +42,7 @@ Upon receiving a message REPLY, j, k from left (right):
 #define I_K 2
 #define I_D 3
 
+// Smelly global variables... but who cares, it's C !
 int uid, lrank, rrank;
 int msgs_sent = 0;
 int msgs_recvd = 0;
@@ -50,11 +51,28 @@ int rsent = 0;
 bool election_complete = FALSE;
 bool ldone = FALSE;
 bool rdone = FALSE;
+MPI_Request lreq, rreq;
+MPI_Status lstat, rstat;
 
+// Integer power function - from http://stackoverflow.com/questions/101439/
 int ipow(int base, int exp);
+
+// Sends a message to the process in the ring that is to the left of this process
+void send_left(int* data);
+
+// Sends a message to the process in the ring that is to the right of this process
+void send_right(int* data);
+
+// Sends a message to the process with rank equal to 'destination'
 void send_msg(int* data, int destination, MPI_Request request, MPI_Status status);
+
+// Receives a message from the process with rank equal to 'source'
 void recv_msg(int* data, int source, MPI_Status status);
+
+// Prints debug information about a sent message
 void print_sent_msg(int send[], int dest);
+
+// Prints debug information about a received message
 void print_recv_msg(int recv[], int source);
 
 // Usage: mpiexec -n NUM ./electleader PNUM
@@ -78,8 +96,6 @@ int main(int argc, char* argv[]) {
 	int leader = -1;
 	int phase = 0;
 	int dist = 0;
-	MPI_Request lreq, rreq;
-	MPI_Status lstat, rstat;
 
 	// Initialize 2-dimensional array to keep track of replies(j,k) already received
 	int replies[num][num];
@@ -100,64 +116,75 @@ int main(int argc, char* argv[]) {
 		recv_msg(lrecv, lrank, lstat);
 		recv_msg(rrecv, rrank, rstat);
 
+		int t = lrecv[I_TYPE];
+		int j = lrecv[I_J];
+		int k = lrecv[I_K];
+		int d = lrecv[I_D];
+
+		// Temp: process 0 announce self as leader
 		if (uid == 0 && i>4) {
 			int data[4] = {T_LEADER, uid, -1, -1};
-			send_msg(data, lrank, lreq, lstat);
-			send_msg(data, rrank, rreq, rstat);
+			send_left(data);
+			send_right(data);
 			break;
 		}
 
 		// Handle messages from the left
-		if (lrecv[I_TYPE] == T_LEADER) {
+		if (t == T_LEADER) {
 			ldone = TRUE;
-			leader = lrecv[I_J];
+			leader = j;
 			printf("** %d acknowledges leader %d\n", uid, leader);
 			if (!rdone) {
 				int data[4] = {T_LEADER, leader, -1, -1};
-				send_msg(data, rrank, rreq, rstat);
+				send_right(data);
 			}
 			//break;
-		} else if (lrecv[I_TYPE] == T_ELECTION) {
-			if (!rdone && (lrecv[I_J] > uid) && (lrecv[I_D] <= ipow(2, lrecv[I_K]))) {
-				int election[4] = {T_ELECTION, lrecv[I_J], lrecv[I_K], lrecv[I_D] + 1};
-				send_msg(election, rrank, rreq, rstat);
+		} else if (t == T_ELECTION) {
+			if (!rdone && (j > uid) && (d <= ipow(2, k))) {
+				int election[4] = {T_ELECTION, j, k, d + 1};
+				send_right(election);
 			}
-			if (!ldone && (lrecv[I_J] > uid) && (lrecv[I_D] == ipow(2, lrecv[I_K]))) {
-				int reply[4] = {T_REPLY, lrecv[I_J], lrecv[I_K], -1};
-				send_msg(reply, lrank, lreq, lstat);
+			if (!ldone && (j > uid) && (d == ipow(2, k))) {
+				int reply[4] = {T_REPLY, j, k, -1};
+				send_left(reply);
 			}
-		} else if (lrecv[I_TYPE] == T_REPLY) {
-			if (!rdone && uid != lrecv[I_J]) {
-				replies[lrecv[I_J]][lrecv[I_K]] = TRUE;
-				int reply[4] = {T_REPLY, lrecv[I_J], lrecv[I_K], -1};
-				send_msg(reply, rrank, rreq, rstat);
+		} else if (t == T_REPLY) {
+			if (!rdone && uid != j) {
+				replies[j][k] = TRUE;
+				int reply[4] = {T_REPLY, j, k, -1};
+				send_right(reply);
 			}
 		}
 
+		t = rrecv[I_TYPE];
+		j = rrecv[I_J];
+		k = rrecv[I_K];
+		d = rrecv[I_D];
+
 		// Handle messages from the right
-		if (rrecv[I_TYPE] == T_LEADER) {
+		if (t == T_LEADER) {
 			rdone = TRUE;
-			leader = rrecv[I_J];
+			leader = j;
 			printf("** %d acknowledges leader %d\n", uid, leader);
 			if (!ldone) {
 				int data[4] = {T_LEADER, leader, -1, -1};
-				send_msg(data, lrank, lreq, lstat);
+				send_left(data);
 			}
 			//break;
-		} else if (rrecv[I_TYPE] == T_ELECTION) {
-			if (!ldone && (rrecv[I_J] > uid) && (rrecv[I_D] <= ipow(2, rrecv[I_K]))) {
-				int election[4] = {T_ELECTION, rrecv[I_J], rrecv[I_K], rrecv[I_D] + 1};
-				send_msg(election, lrank, lreq, lstat);
+		} else if (t == T_ELECTION) {
+			if (!ldone && (j > uid) && (d <= ipow(2, k))) {
+				int election[4] = {T_ELECTION, j, k, d + 1};
+				send_left(election);
 			}
-			if (!rdone && (rrecv[I_J] > uid) && (rrecv[I_D] == ipow(2, rrecv[I_K]))) {
-				int reply[4] = {T_REPLY, rrecv[I_J], rrecv[I_K], -1};
-				send_msg(reply, rrank, rreq, rstat);
+			if (!rdone && (j > uid) && (d == ipow(2, k))) {
+				int reply[4] = {T_REPLY, j, k, -1};
+				send_right(reply);
 			}
-		} else if (rrecv[I_TYPE] == T_REPLY) {
-			if (!ldone && uid != rrecv[I_J]) {
-				replies[rrecv[I_J]][rrecv[I_K]] = TRUE;
-				int reply[4] = {T_REPLY, rrecv[I_J], rrecv[I_K], -1};
-				send_msg(reply, lrank, lreq, lstat);
+		} else if (t == T_REPLY) {
+			if (!ldone && uid != j) {
+				replies[j][k] = TRUE;
+				int reply[4] = {T_REPLY, j, k, -1};
+				send_left(reply);
 			}
 		}
 
@@ -167,16 +194,15 @@ int main(int argc, char* argv[]) {
 		// Send null messages to prevent deadlock
 		if (lsent == 0) {
 			int data[4] = {T_NULL, uid, 0, 0};
-			send_msg(data, lrank, lreq, lstat);
+			send_left(data);
 		}
 		if (rsent == 0) {
 			int data[4] = {T_NULL, uid, 0, 0};
-			send_msg(data, rrank, rreq, rstat);
+			send_right(data);
 		}
 	}
 
 	// Election complete
-	//printf("**%d is done\n", uid);
 	//printf("rank=%d, id=%d, leader=0, mrcvd=%d, msent=%d\n", rank, uid, msgs_recvd, msgs_sent);
 
 	MPI_Finalize();
@@ -184,7 +210,7 @@ int main(int argc, char* argv[]) {
 
 }
 
-// Borrowed from http://stackoverflow.com/questions/101439/
+// Integer power function - from http://stackoverflow.com/questions/101439/
 int ipow(int base, int exp) {
     int result = 1;
     while (exp) {
@@ -196,6 +222,17 @@ int ipow(int base, int exp) {
     return result;
 }
 
+// Sends a message to the process in the ring that is to the left of this process
+void send_left(int* data) {
+	send_msg(data, lrank, lreq, lstat);
+}
+
+// Sends a message to the process in the ring that is to the right of this process
+void send_right(int* data) {
+	send_msg(data, rrank, rreq, rstat);
+}
+
+// Sends a message to the process with rank equal to 'destination'
 void send_msg(int* data, int destination, MPI_Request request, MPI_Status status) {
 	if (destination == lrank) lsent++;
 	else if (destination == rrank) rsent++;
@@ -205,12 +242,14 @@ void send_msg(int* data, int destination, MPI_Request request, MPI_Status status
 	msgs_sent++;
 }
 
+// Receives a message from the process with rank equal to 'source'
 void recv_msg(int* data, int source, MPI_Status status) {
 	MPI_Recv(data, 4, MPI_INT, source, 0, MPI_COMM_WORLD, &status);
 	print_recv_msg(data, source);
 	msgs_recvd++;
 }
 
+// Prints debug information about a sent message
 void print_sent_msg(int send[], int dest) {
 	if (send[I_TYPE] == T_NULL) return;
 	printf("%d sent to %d %s: {%d, uid:%d, phase:%d, dist:%d}\n", uid, dest,
@@ -218,6 +257,7 @@ void print_sent_msg(int send[], int dest) {
 		send[I_TYPE], send[I_J], send[I_K], send[I_D]);
 }
 
+// Prints debug information about a received message
 void print_recv_msg(int recv[], int source) {
 	if (recv[I_TYPE] == T_NULL) return;
 	printf("%d received from %d %s: {%d, uid:%d, phase:%d, dist:%d}\n", uid, source,
